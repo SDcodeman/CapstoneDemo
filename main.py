@@ -217,7 +217,6 @@ if st.session_state.user_encoded_data:
 
 
 
-
 #Map Part!!!
 
 st.subheader("📍 Visualize All Coordinates on Map")
@@ -261,19 +260,21 @@ if show1 and not dataset1.empty:
 
         # --- MODIFIED POPUP ---
         popup_html = f"""
-        <b>Testing Data Point {idx}</b><br>
-        --------------------<br>
-        <b>Time:</b> {row['time_of_week']}<br>
-        <b>Latitude:</b> {lat:.7f}<br>
-        <b>Longitude:</b> {lon:.7f}<br>
-        <b>Accuracy:</b> {row['horizontal_accuracy']} mm<br>
-        <b>Battery:</b> {row['battery_mv']} mV
-        """
+        <div style="width: 300px;">
+            <b>Testing Data Point {idx}</b><br>
+            --------------------<br>
+            <b>Time:</b> {row['time_of_week']}<br>
+            <b>Latitude:</b> {lat:.7f}<br>
+            <b>Longitude:</b> {lon:.7f}<br>
+            <b>Accuracy:</b> {row['horizontal_accuracy']} mm<br>
+            <b>Battery:</b> {row['battery_mv']} mV
+        </div>
+        """ # <-- CHANGED: Wrapped in a div with a width style
 
         map_data.append({
             "lat": lat,
             "lon": lon,
-            "popup": popup_html, # <-- CHANGED
+            "popup": popup_html,
             "color": colors1[idx]
         })
 
@@ -290,19 +291,21 @@ if show2 and not dataset2.empty:
 
         # --- MODIFIED POPUP ---
         popup_html = f"""
-        <b>Decoded Entry {idx}</b><br>
-        --------------------<br>
-        <b>Time:</b> {row['Time of Week (s)']}<br>
-        <b>Latitude:</b> {lat:.7f}<br>
-        <b>Longitude:</b> {lon:.7f}<br>
-        <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
-        <b>Battery:</b> {row['Battery (mV)']} mV
-        """
+        <div style="width: 300px;">
+            <b>Decoded Entry {idx}</b><br>
+            --------------------<br>
+            <b>Time:</b> {row['Time of Week (s)']}<br>
+            <b>Latitude:</b> {lat:.7f}<br>
+            <b>Longitude:</b> {lon:.7f}<br>
+            <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
+            <b>Battery:</b> {row['Battery (mV)']} mV
+        </div>
+        """ # <-- CHANGED: Wrapped in a div with a width style
 
         map_data.append({
             "lat": lat,
             "lon": lon,
-            "popup": popup_html, # <-- CHANGED
+            "popup": popup_html,
             "color": colors2[idx]
         })
 
@@ -319,19 +322,21 @@ if show3 and not dataset3.empty:
         
         # --- MODIFIED POPUP ---
         popup_html = f"""
-        <b>Encoded Entry {idx}</b><br>
-        --------------------<br>
-        <b>Time:</b> {row['Time of Week (s)']}<br>
-        <b>Latitude:</b> {lat:.7f}<br>
-        <b>Longitude:</b> {lon:.7f}<br>
-        <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
-        <b>Battery:</b> {row['Battery (mV)']} mV
-        """
+        <div style="width: 300px;">
+            <b>Encoded Entry {idx}</b><br>
+            --------------------<br>
+            <b>Time:</b> {row['Time of Week (s)']}<br>
+            <b>Latitude:</b> {lat:.7f}<br>
+            <b>Longitude:</b> {lon:.7f}<br>
+            <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
+            <b>Battery:</b> {row['Battery (mV)']} mV
+        </div>
+        """ # <-- CHANGED: Wrapped in a div with a width style
 
         map_data.append({
             "lat": lat,
             "lon": lon,
-            "popup": popup_html, # <-- CHANGED
+            "popup": popup_html,
             "color": colors3[idx]
         })
 
@@ -363,6 +368,7 @@ if map_data:
         PolyLine(points3[::-1], color="#2ECC71", weight=2, opacity=0.5).add_to(m)
 
     LayerControl().add_to(m)
-    st_folium(m, width=800, height=600)
+    # --- CHANGED: Increased width and height for a larger map ---
+    st_folium(m, width=1200, height=800)
 else:
     st.info("No GPS data available yet to plot on the map.")
