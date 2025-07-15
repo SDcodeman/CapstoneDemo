@@ -1,0 +1,7 @@
+[theme]
+base = "dark"
+primaryColor = "#1DB954"        # Optional: Spotify green or your brand color
+backgroundColor = "#0E1117"     # Optional: Dark background
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
