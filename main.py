@@ -8,6 +8,7 @@ import time
 import hashlib
 
 MINIMUM_ACCURACY = 5000
+VOLTAGE_SKEW = 0.00143678161
 
 # typedef struct {
 #     uint32_t iTOW;   // GPS time of week [ms]
@@ -142,7 +143,7 @@ if submitted:
                 "Longitude (°)": decoded["longitude"] / 1e7,
                 "Latitude (°)": decoded["latitude"] / 1e7,
                 "Horizontal Accuracy (mm)": decoded["horizontal_accuracy"],
-                "Battery (V)": decoded["battery_v"],
+                "Battery (V)": decoded["battery_v"] * VOLTAGE_SKEW,
                 "Raw Hex": user_input_hex
             }
 
@@ -160,21 +161,23 @@ uploaded_file = st.file_uploader(
     accept_multiple_files=False
 )
 
+if "uploaded_files_data" not in st.session_state:
+    st.session_state.uploaded_files_data = {}  # key: file_id, value: list of decoded entries
+
 if "last_file_hash" not in st.session_state:
     st.session_state.last_file_hash = None
 
 if uploaded_file is not None:
-    file_hash, content = get_file_hash(uploaded_file)
+    filename = uploaded_file.name
 
-    if file_hash != st.session_state.last_file_hash:
+    if filename not in st.session_state.uploaded_files_data:
         try:
             # Read CSV (assuming hex strings are in a column named 'hex' or similar)
             df = pd.read_csv(uploaded_file, header=None, names=["hex"])
-
-            st.session_state.last_file_hash = file_hash
             
             # Adjust the column name below to match your CSV
             hex_column = "hex"  # <-- change this if your column has a different name
+            decoded_entries = []
 
             # Process each hex string row
             for hex_str in df[hex_column]:
@@ -189,17 +192,25 @@ if uploaded_file is not None:
                         "Longitude (°)": decoded["longitude"] / 1e7,
                         "Latitude (°)": decoded["latitude"] / 1e7,
                         "Horizontal Accuracy (mm)": decoded["horizontal_accuracy"],
-                        "Battery (V)": decoded["battery_v"],
+                        "Battery (V)": decoded["battery_v"] * VOLTAGE_SKEW,
                         "Raw Hex": hex_str
                     }
-                    st.session_state.user_input_hex_list.append(formatted)
+                    decoded_entries.append(formatted)
                 except Exception as e:
-                    st.warning(f"Failed to decode {hex_str}: {e}")
+                    st.warning(f"Failed to decode {filename}: {e}")
 
+            st.session_state.uploaded_files_data[filename] = decoded_entries
             # st.success(f"Processed {len(df)} entries from CSV.")
         except Exception as e:
             st.error(f"Failed to read CSV file: {e}")
 
+
+if st.session_state.uploaded_files_data:
+    for file_name in list(st.session_state.uploaded_files_data.keys()):
+        # file_name = file_id[0]
+        if st.button(f"Remove {file_name}", key=f"remove_{file_name}"):
+            del st.session_state.uploaded_files_data[file_name]
+            st.rerun()
 
 # Display the list
 if st.session_state.user_input_hex_list:
@@ -209,7 +220,7 @@ if st.session_state.user_input_hex_list:
             st.session_state.confirm_clear = False
 
         if not st.session_state.confirm_clear:
-            if st.button("🗑️ Clear All Decoded Entries"):
+            if st.button("🗑️ Clear All Manual Entries"):
                 st.session_state.confirm_clear = True
                 st.rerun()
         else:
@@ -222,9 +233,15 @@ if st.session_state.user_input_hex_list:
                 st.session_state.confirm_clear = False
                 st.rerun()
 
-    st.subheader("All Decoded Entries")
+    st.subheader("Manual Entries")
     styled_df = pd.DataFrame(st.session_state.user_input_hex_list).style.apply(highlight_bad_accuracy, axis=1)
     st.dataframe(styled_df)
+
+if st.session_state.uploaded_files_data:
+    for file_name in st.session_state.uploaded_files_data:
+        st.subheader(file_name)
+        styled_df = pd.DataFrame(st.session_state.uploaded_files_data[file_name]).style.apply(highlight_bad_accuracy, axis=1)
+        st.dataframe(styled_df)
 
 
 #Map Part!!!
@@ -257,53 +274,18 @@ if not st.session_state.get("user_encoded_data"):
 # Base map initialization after checking data
 m = None
 
-# User-decoded hex inputs
-dataset = pd.DataFrame(st.session_state.user_input_hex_list)
-show = st.checkbox("Show User-Decoded Data", value=True)
-if show and not dataset.empty:
-    filtered_dataset = dataset[dataset["Horizontal Accuracy (mm)"] <= MINIMUM_ACCURACY]
-
-    colors = generate_faded_colors("#1F77B4", len(dataset))  # Blue gradient
-    points = []
-    for idx, row in filtered_dataset[::-1].reset_index(drop=True).iterrows():
-        lat = row["Latitude (°)"]
-        lon = row["Longitude (°)"]
-        points.append((lat, lon))
-
-        # --- MODIFIED POPUP ---
-        popup_html = f"""
-        <div style="width: 300px;">
-            <b>Decoded Entry {idx}</b><br>
-            --------------------<br>
-            <b>Time:</b> {row['Time of Week (s)']}<br>
-            <b>Latitude:</b> {lat:.7f}<br>
-            <b>Longitude:</b> {lon:.7f}<br>
-            <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
-            <b>Battery:</b> {row['Battery (V)']} V
-        </div>
-        """ # <-- CHANGED: Wrapped in a div with a width style
-
-        map_data.append({
-            "lat": lat,
-            "lon": lon,
-            "popup": popup_html,
-            "color": colors[idx]
-        })
-
 
 # --- Map Center ---
-if map_data:
-    avg_lat = sum([pt["lat"] for pt in map_data]) / len(map_data)
-    avg_lon = sum([pt["lon"] for pt in map_data]) / len(map_data)
+if st.session_state.user_input_hex_list is not None or st.session_state.uploaded_files_data is not [] :
+    st.session_state.uploaded_files_data["Manual Data"] = st.session_state.user_input_hex_list
     m = Map(tiles="CartoDB positron")
 
-    # Compute bounds
-    lats = [pt["lat"] for pt in map_data]
-    lons = [pt["lon"] for pt in map_data]
-    bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
+    lat_large = float('-inf')
+    lat_small = float('inf')
+    lon_large = float('-inf')
+    lon_small = float('inf')
 
-    # Fit map to bounds
-    m.fit_bounds(bounds)
+
 
     # Add all point markers
     for pt in map_data:
@@ -317,10 +299,73 @@ if map_data:
         ).add_to(m)
 
     # Add polylines per dataset if applicable
-    if show and dataset.shape[0] > 1:
-        PolyLine(points[::-1], color="#1F77B4", weight=2, opacity=0.5).add_to(m)
+    for file_name in st.session_state.uploaded_files_data:
+        dataset = pd.DataFrame(st.session_state.uploaded_files_data[file_name])
+        show = st.checkbox(f"Show {file_name}", key=f"Show {file_name}", value=True)
+        if show and not dataset.empty:
+            filtered_dataset = dataset[dataset["Horizontal Accuracy (mm)"] <= MINIMUM_ACCURACY]
+
+            colors = generate_faded_colors("#1F77B4", len(dataset))  # Blue gradient
+            points = []
+            for idx, row in filtered_dataset[::-1].reset_index(drop=True).iterrows():
+                lat = row["Latitude (°)"]
+                lon = row["Longitude (°)"]
+                points.append((lat, lon))
+
+                if lat > lat_large:
+                    lat_large = lat
+                if lat < lat_small:
+                    lat_small = lat
+                if lon > lon_large:
+                    lon_large = lon
+                if lon < lon_small:
+                    lon_small = lon
+
+                # --- MODIFIED POPUP ---
+                popup_html = f"""
+                <div style="width: 300px;">
+                    <b>Decoded Entry {idx}</b><br>
+                    --------------------<br>
+                    <b>Time:</b> {row['Time of Week (s)']}<br>
+                    <b>Latitude:</b> {lat:.7f}<br>
+                    <b>Longitude:</b> {lon:.7f}<br>
+                    <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
+                    <b>Battery:</b> {row['Battery (V)']} V
+                </div>
+                """ # <-- CHANGED: Wrapped in a div with a width style
+
+                map_data.append({
+                    "lat": lat,
+                    "lon": lon,
+                    "popup": popup_html,
+                    "color": colors[idx]
+                })
+
+            # Add all point markers
+            for pt in map_data:
+                CircleMarker(
+                    location=[pt["lat"], pt["lon"]],
+                    radius=6,
+                    color=pt["color"],
+                    fill=True,
+                    fill_opacity=0.8,
+                    popup=pt["popup"]
+                ).add_to(m)
+            if show and dataset.shape[0] > 1:
+                PolyLine(points[::-1], color="#1F77B4", weight=2, opacity=0.5).add_to(m)
 
     LayerControl().add_to(m)
+
+
+    # Compute bounds
+    bounds = [[lat_small, lon_small], [lat_large, lon_large]]
+
+    # Fit map to bounds
+    m.fit_bounds(bounds)
+
+    del st.session_state.uploaded_files_data["Manual Data"]
+
+
     # --- CHANGED: Increased width and height for a larger map ---
     st_folium(m, width=1200, height=800)
 else:
