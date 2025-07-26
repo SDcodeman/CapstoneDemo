@@ -4,6 +4,8 @@ from streamlit_folium import st_folium
 import struct # This is the key library for decoding binary data
 import colorsys
 from folium import Map, CircleMarker, LayerControl, PolyLine
+import time
+import hashlib
 
 # typedef struct {
 #     uint32_t iTOW;   // GPS time of week [ms]
@@ -15,16 +17,22 @@ from folium import Map, CircleMarker, LayerControl, PolyLine
 # --- 1. MOCK DATA & DECODING ---
 #This is the arrangement I am least certain about prior to being given example data will return to this once Joel sends me things
 
-def encode_to_hex(time_of_week, longitude, latitude, h_acc, battery_mv):
+def get_file_hash(file):
+    file.seek(0)
+    content = file.read()
+    file.seek(0)
+    return hashlib.md5(content).hexdigest(), content
+
+def encode_to_hex(time_of_week, longitude, latitude, h_acc, battery_v):
     """
     Convert values to a packed hex string.
     - time_of_week: uint32 (e.g., GPS time in seconds)
     - longitude: int32 (e.g., in 1e-7 degrees)
     - latitude: int32 (e.g., in 1e-7 degrees)
     - h_acc: uint32 (horizontal accuracy in mm or similar)
-    - battery_mv: uint16 (battery in millivolts)
+    - battery_v: uint16 (battery in volts)
     """
-    packed = struct.pack(">IiiIH", time_of_week, longitude, latitude, h_acc, battery_mv)
+    packed = struct.pack(">IiiIH", time_of_week, longitude, latitude, h_acc, battery_v)
     return packed.hex().upper()
 
 # --- DECODE ---
@@ -39,7 +47,7 @@ def decode_from_hex(hex_string):
         "longitude": unpacked[1],
         "latitude": unpacked[2],
         "horizontal_accuracy": unpacked[3],
-        "battery_mv": unpacked[4]
+        "battery_v": unpacked[4]
     }
 
 from datetime import datetime, timedelta, timezone
@@ -141,7 +149,7 @@ if submitted:
                 "Longitude (°)": decoded["longitude"] / 1e7,
                 "Latitude (°)": decoded["latitude"] / 1e7,
                 "Horizontal Accuracy (mm)": decoded["horizontal_accuracy"],
-                "Battery (mV)": decoded["battery_mv"],
+                "Battery (V)": decoded["battery_v"],
                 "Raw Hex": user_input_hex
             }
 
@@ -150,12 +158,79 @@ if submitted:
         except Exception as e:
             st.error(f"❌ Decoding failed: {str(e)}")
 
+
+st.subheader("Upload CSV with Hex Strings")
+
+uploaded_file = st.file_uploader(
+    "Upload CSV file with hex strings", 
+    type=["csv"], 
+    accept_multiple_files=False
+)
+
+if "last_file_hash" not in st.session_state:
+    st.session_state.last_file_hash = None
+
+if uploaded_file is not None:
+    file_hash, content = get_file_hash(uploaded_file)
+
+    if file_hash != st.session_state.last_file_hash:
+        try:
+            # Read CSV (assuming hex strings are in a column named 'hex' or similar)
+            df = pd.read_csv(uploaded_file, header=None, names=["hex"])
+
+            st.session_state.last_file_hash = file_hash
+            
+            # Adjust the column name below to match your CSV
+            hex_column = "hex"  # <-- change this if your column has a different name
+
+            # Process each hex string row
+            for hex_str in df[hex_column]:
+                hex_str = str(hex_str).strip().upper()
+                if len(hex_str) != 36 or any(c not in "0123456789ABCDEF" for c in hex_str):
+                    st.warning(f"Skipping invalid hex string: {hex_str}")
+                    continue
+                try:
+                    decoded = decode_from_hex(hex_str)
+                    formatted = {
+                        "Time of Week (s)": decoded["time_of_week"],
+                        "Longitude (°)": decoded["longitude"] / 1e7,
+                        "Latitude (°)": decoded["latitude"] / 1e7,
+                        "Horizontal Accuracy (mm)": decoded["horizontal_accuracy"],
+                        "Battery (V)": decoded["battery_v"],
+                        "Raw Hex": hex_str
+                    }
+                    st.session_state.user_input_hex_list.append(formatted)
+                except Exception as e:
+                    st.warning(f"Failed to decode {hex_str}: {e}")
+
+            # st.success(f"Processed {len(df)} entries from CSV.")
+        except Exception as e:
+            st.error(f"Failed to read CSV file: {e}")
+
+
 # Display the list
 if st.session_state.user_input_hex_list:
+    if st.session_state.get("user_input_hex_list"):
+
+        if "confirm_clear" not in st.session_state:
+            st.session_state.confirm_clear = False
+
+        if not st.session_state.confirm_clear:
+            if st.button("🗑️ Clear All Decoded Entries"):
+                st.session_state.confirm_clear = True
+                st.rerun()
+        else:
+            col1, col2 = st.columns(2)
+            if col1.button("✅ Confirm"):
+                st.session_state.user_input_hex_list.clear()
+                st.session_state.confirm_clear = False
+                st.rerun()
+            if col2.button("❌ Cancel"):
+                st.session_state.confirm_clear = False
+                st.rerun()
+
     st.subheader("All Decoded Entries")
     st.dataframe(pd.DataFrame(st.session_state.user_input_hex_list))
-
-
 
 
 
@@ -174,7 +249,7 @@ with col1:
 
     # Combine into a single datetime object
     time_of_week = datetime.combine(date, time).replace(tzinfo=timezone.utc)
-    battery_mv = st.number_input("Battery Voltage (mV)", min_value=0, max_value=65535, step=1)
+    battery_v = st.number_input("Battery Voltage (V)", min_value=0, max_value=65535, step=1)
 
 with col2:
     latitude = st.number_input("Latitude (°)", format="%.7f")
@@ -190,14 +265,14 @@ if st.button("Encode to Hex"):
         lat_raw = int(latitude * 1e7)
 
         # Encode using your function
-        encoded_hex = encode_to_hex(utc_to_gps_time_of_week(time_of_week), lon_raw, lat_raw, int(h_acc), int(battery_mv))
+        encoded_hex = encode_to_hex(utc_to_gps_time_of_week(time_of_week), lon_raw, lat_raw, int(h_acc), int(battery_v))
 
         entry = {
             "Time of Week (s)": time_of_week,
             "Longitude (°)": longitude,
             "Latitude (°)": latitude,
             "Horizontal Accuracy (mm)": int(h_acc),
-            "Battery (mV)": int(battery_mv),
+            "Battery (V)": int(battery_v),
             "Encoded Hex": encoded_hex
         }
 
@@ -267,7 +342,7 @@ if show1 and not dataset1.empty:
             <b>Latitude:</b> {lat:.7f}<br>
             <b>Longitude:</b> {lon:.7f}<br>
             <b>Accuracy:</b> {row['horizontal_accuracy']} mm<br>
-            <b>Battery:</b> {row['battery_mv']} mV
+            <b>Battery:</b> {row['battery_v']} V
         </div>
         """ # <-- CHANGED: Wrapped in a div with a width style
 
@@ -298,7 +373,7 @@ if show2 and not dataset2.empty:
             <b>Latitude:</b> {lat:.7f}<br>
             <b>Longitude:</b> {lon:.7f}<br>
             <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
-            <b>Battery:</b> {row['Battery (mV)']} mV
+            <b>Battery:</b> {row['Battery (V)']} V
         </div>
         """ # <-- CHANGED: Wrapped in a div with a width style
 
@@ -329,7 +404,7 @@ if show3 and not dataset3.empty:
             <b>Latitude:</b> {lat:.7f}<br>
             <b>Longitude:</b> {lon:.7f}<br>
             <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
-            <b>Battery:</b> {row['Battery (mV)']} mV
+            <b>Battery:</b> {row['Battery (V)']} V
         </div>
         """ # <-- CHANGED: Wrapped in a div with a width style
 
@@ -344,7 +419,15 @@ if show3 and not dataset3.empty:
 if map_data:
     avg_lat = sum([pt["lat"] for pt in map_data]) / len(map_data)
     avg_lon = sum([pt["lon"] for pt in map_data]) / len(map_data)
-    m = Map(location=[avg_lat, avg_lon], zoom_start=5, tiles="CartoDB positron")
+    m = Map(tiles="CartoDB positron")
+
+    # Compute bounds
+    lats = [pt["lat"] for pt in map_data]
+    lons = [pt["lon"] for pt in map_data]
+    bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
+
+    # Fit map to bounds
+    m.fit_bounds(bounds)
 
     # Add all point markers
     for pt in map_data:
