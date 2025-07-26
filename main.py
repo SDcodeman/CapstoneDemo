@@ -6,8 +6,8 @@ import colorsys
 from folium import Map, CircleMarker, LayerControl, PolyLine
 import time
 import hashlib
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+
+MINIMUM_ACCURACY = 5000
 
 # typedef struct {
 #     uint32_t iTOW;   // GPS time of week [ms]
@@ -53,6 +53,7 @@ def decode_from_hex(hex_string):
     }
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # --- Constants You Need ---
 # The GPS clock started at midnight, Jan 6, 1980.
@@ -97,6 +98,14 @@ def utc_to_gps_time_of_week(dt: datetime) -> int:
     tow_seconds = total_seconds - gps_week_start
     return tow_seconds * 1000  # to milliseconds
 
+
+def highlight_bad_accuracy(row):
+    if row["Horizontal Accuracy (mm)"] > MINIMUM_ACCURACY:
+        return ["color: #a00; text-decoration: line-through"] * len(row)
+        # return ["background-color: #fdd; color: #a00; text-decoration: line-through"] * len(row)
+    else:
+        return [""] * len(row)
+
 #Page Layout
 st.set_page_config(layout="wide")
 
@@ -104,18 +113,6 @@ testing_data = ['04F2DC68B6D39ED51D5211DA000021AB0FFF','050B61C0B6D3A2991D521651
 
 st.title("Data Collection")
 st.markdown("This portion of the app visualized the process by which data is collected from the pcb and sent off to the argos servers for processing by reaserchers.")
-
-st.subheader("Testing Data Table")
-st.dataframe(testing_data)
-
-#Decode and create DataFrame
-values = []
-for i in testing_data:
-    values.append(decode_from_hex(i))
-
-testing_results = pd.DataFrame(values)
-st.subheader("Decoded Data Table")
-st.dataframe(testing_results)
 
 st.subheader("Enter a Hex String to Decode")
 
@@ -226,66 +223,8 @@ if st.session_state.user_input_hex_list:
                 st.rerun()
 
     st.subheader("All Decoded Entries")
-    st.dataframe(pd.DataFrame(st.session_state.user_input_hex_list))
-
-
-
-# --- ENCODE SECTION ---
-st.subheader("Enter Individual Values to Encode into Hex")
-
-# Initialize persistent storage for encoded entries
-if "user_encoded_data" not in st.session_state:
-    st.session_state.user_encoded_data = []
-
-# Input fields
-col1, col2 = st.columns(2)
-with col1:
-    date = st.date_input("Select UTC Date", value=datetime.utcnow().date())
-    time = st.time_input("Select UTC Time", value=datetime.utcnow().time())
-
-    # Combine into a single datetime object
-    time_of_week = datetime.combine(date, time).replace(tzinfo=timezone.utc)
-    battery_v = st.number_input("Battery Voltage (V)", min_value=0, max_value=65535, step=1)
-
-with col2:
-    latitude = st.number_input("Latitude (°)", format="%.7f")
-    longitude = st.number_input("Longitude (°)", format="%.7f")
-    h_acc = st.number_input("Horizontal Accuracy (mm)", min_value=0, step=1)
-
-
-# Submit button
-if st.button("Encode to Hex"):
-    try:
-        # Convert to required internal formats
-        lon_raw = int(longitude * 1e7)
-        lat_raw = int(latitude * 1e7)
-
-        # Encode using your function
-        encoded_hex = encode_to_hex(utc_to_gps_time_of_week(time_of_week), lon_raw, lat_raw, int(h_acc), int(battery_v))
-
-        entry = {
-            "Time of Week (s)": time_of_week,
-            "Longitude (°)": longitude,
-            "Latitude (°)": latitude,
-            "Horizontal Accuracy (mm)": int(h_acc),
-            "Battery (V)": int(battery_v),
-            "Encoded Hex": encoded_hex
-        }
-
-        st.session_state.user_encoded_data.append(entry)
-        st.success("✅ Successfully encoded!")
-
-    except Exception as e:
-        st.error(f"❌ Encoding failed: {str(e)}")
-
-# Show the encoded results
-if st.session_state.user_encoded_data:
-    st.subheader("All Encoded Entries")
-    st.dataframe(pd.DataFrame(st.session_state.user_encoded_data))
-
-
-
-
+    styled_df = pd.DataFrame(st.session_state.user_input_hex_list).style.apply(highlight_bad_accuracy, axis=1)
+    st.dataframe(styled_df)
 
 
 #Map Part!!!
@@ -318,47 +257,18 @@ if not st.session_state.get("user_encoded_data"):
 # Base map initialization after checking data
 m = None
 
-# Dataset 1: Static decoded testing data
-dataset1 = pd.DataFrame(values) if values else pd.DataFrame()
-show1 = st.checkbox("Show Decoded Testing Data", value=True)
-if show1 and not dataset1.empty:
-    colors1 = generate_faded_colors("#FF5733", len(dataset1))  # Red gradient
-    points1 = []
-    for idx, row in dataset1[::-1].reset_index(drop=True).iterrows():
-        lat = row["latitude"] / 1e7
-        lon = row["longitude"] / 1e7
-        points1.append((lat, lon))
+# User-decoded hex inputs
+dataset = pd.DataFrame(st.session_state.user_input_hex_list)
+show = st.checkbox("Show User-Decoded Data", value=True)
+if show and not dataset.empty:
+    filtered_dataset = dataset[dataset["Horizontal Accuracy (mm)"] <= MINIMUM_ACCURACY]
 
-        # --- MODIFIED POPUP ---
-        popup_html = f"""
-        <div style="width: 300px;">
-            <b>Testing Data Point {idx}</b><br>
-            --------------------<br>
-            <b>Time:</b> {row['time_of_week']}<br>
-            <b>Latitude:</b> {lat:.7f}<br>
-            <b>Longitude:</b> {lon:.7f}<br>
-            <b>Accuracy:</b> {row['horizontal_accuracy']} mm<br>
-            <b>Battery:</b> {row['battery_v']} V
-        </div>
-        """ # <-- CHANGED: Wrapped in a div with a width style
-
-        map_data.append({
-            "lat": lat,
-            "lon": lon,
-            "popup": popup_html,
-            "color": colors1[idx]
-        })
-
-# Dataset 2: User-decoded hex inputs
-dataset2 = pd.DataFrame(st.session_state.user_input_hex_list)
-show2 = st.checkbox("Show User-Decoded Data", value=True)
-if show2 and not dataset2.empty:
-    colors2 = generate_faded_colors("#1F77B4", len(dataset2))  # Blue gradient
-    points2 = []
-    for idx, row in dataset2[::-1].reset_index(drop=True).iterrows():
+    colors = generate_faded_colors("#1F77B4", len(dataset))  # Blue gradient
+    points = []
+    for idx, row in filtered_dataset[::-1].reset_index(drop=True).iterrows():
         lat = row["Latitude (°)"]
         lon = row["Longitude (°)"]
-        points2.append((lat, lon))
+        points.append((lat, lon))
 
         # --- MODIFIED POPUP ---
         popup_html = f"""
@@ -377,39 +287,9 @@ if show2 and not dataset2.empty:
             "lat": lat,
             "lon": lon,
             "popup": popup_html,
-            "color": colors2[idx]
+            "color": colors[idx]
         })
 
-# Dataset 3: User-encoded inputs
-dataset3 = pd.DataFrame(st.session_state.user_encoded_data)
-show3 = st.checkbox("Show Encoded Data", value=True)
-if show3 and not dataset3.empty:
-    colors3 = generate_faded_colors("#2ECC71", len(dataset3))  # Green gradient
-    points3 = []
-    for idx, row in dataset3[::-1].reset_index(drop=True).iterrows():
-        lat = row["Latitude (°)"]
-        lon = row["Longitude (°)"]
-        points3.append((lat, lon))
-        
-        # --- MODIFIED POPUP ---
-        popup_html = f"""
-        <div style="width: 300px;">
-            <b>Encoded Entry {idx}</b><br>
-            --------------------<br>
-            <b>Time:</b> {row['Time of Week (s)']}<br>
-            <b>Latitude:</b> {lat:.7f}<br>
-            <b>Longitude:</b> {lon:.7f}<br>
-            <b>Accuracy:</b> {row['Horizontal Accuracy (mm)']} mm<br>
-            <b>Battery:</b> {row['Battery (V)']} V
-        </div>
-        """ # <-- CHANGED: Wrapped in a div with a width style
-
-        map_data.append({
-            "lat": lat,
-            "lon": lon,
-            "popup": popup_html,
-            "color": colors3[idx]
-        })
 
 # --- Map Center ---
 if map_data:
@@ -437,14 +317,8 @@ if map_data:
         ).add_to(m)
 
     # Add polylines per dataset if applicable
-    if show1 and dataset1.shape[0] > 1:
-        PolyLine(points1[::-1], color="#FF5733", weight=2, opacity=0.5).add_to(m)
-
-    if show2 and dataset2.shape[0] > 1:
-        PolyLine(points2[::-1], color="#1F77B4", weight=2, opacity=0.5).add_to(m)
-
-    if show3 and dataset3.shape[0] > 1:
-        PolyLine(points3[::-1], color="#2ECC71", weight=2, opacity=0.5).add_to(m)
+    if show and dataset.shape[0] > 1:
+        PolyLine(points[::-1], color="#1F77B4", weight=2, opacity=0.5).add_to(m)
 
     LayerControl().add_to(m)
     # --- CHANGED: Increased width and height for a larger map ---
