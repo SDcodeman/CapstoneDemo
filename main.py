@@ -6,6 +6,8 @@ import colorsys
 from folium import Map, CircleMarker, LayerControl, PolyLine
 import time
 import hashlib
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 # typedef struct {
 #     uint32_t iTOW;   // GPS time of week [ms]
@@ -43,7 +45,7 @@ def decode_from_hex(hex_string):
     byte_data = bytes.fromhex(hex_string)
     unpacked = struct.unpack(">IiiIH", byte_data)
     return {
-        "time_of_week": str(gps_time_of_week_ms_to_utc(unpacked[0])),
+        "time_of_week": str(gps_time_of_week_ms_to_local(unpacked[0])),
         "longitude": unpacked[1],
         "latitude": unpacked[2],
         "horizontal_accuracy": unpacked[3],
@@ -63,32 +65,26 @@ LEAP_SECONDS = 18
 # Number of seconds in one week.
 SECONDS_IN_WEEK = 7 * 24 * 3600
 
-def gps_time_of_week_ms_to_utc(itow_ms: int) -> datetime:
-    """
-    Converts GPS Time of Week (iTOW) in milliseconds to a UTC datetime object,
-    assuming the time is in the current GPS week.
-    """
-    # 1. Find the current GPS week number.
-    #    - Get the current time in UTC.
-    #    - Convert it to GPS time by adding the leap seconds.
-    #    - Calculate how many seconds have passed since the GPS epoch.
-    #    - Divide by seconds_in_a_week to get the current week number.
+TIMEZONE_NAME = "America/Vancouver"
+
+def gps_time_of_week_ms_to_local(itow_ms: int) -> datetime:
+    # Get current GPS week number
     now_utc = datetime.now(timezone.utc)
     now_gps = now_utc + timedelta(seconds=LEAP_SECONDS)
-    seconds_since_epoch = (now_gps - GPS_EPOCH).total_seconds()
-    current_gps_week = int(seconds_since_epoch // SECONDS_IN_WEEK)
-
-    # 2. Calculate the total seconds from the GPS epoch to your data point.
-    #    This is the number of full weeks plus the time into the current week.
-    total_seconds_in_gps_time = (current_gps_week * SECONDS_IN_WEEK) + (itow_ms / 1000.0)
-
-    # 3. Convert these total seconds into an absolute GPS datetime.
-    absolute_gps_time = GPS_EPOCH + timedelta(seconds=total_seconds_in_gps_time)
-
-    # 4. Convert the absolute GPS time to UTC by subtracting the leap seconds.
+    current_gps_week = int((now_gps - GPS_EPOCH).total_seconds() // SECONDS_IN_WEEK)
+    
+    # Calculate absolute GPS time
+    total_seconds = current_gps_week * SECONDS_IN_WEEK + itow_ms / 1000.0
+    absolute_gps_time = GPS_EPOCH + timedelta(seconds=total_seconds)
+    
+    # Convert GPS time to UTC
     utc_time = absolute_gps_time - timedelta(seconds=LEAP_SECONDS)
     
-    return utc_time
+    # Make UTC aware, then convert to local timezone
+    utc_time = utc_time.replace(tzinfo=timezone.utc)
+    local_time = utc_time.astimezone(ZoneInfo(TIMEZONE_NAME))
+    
+    return local_time
 
 
 def utc_to_gps_time_of_week(dt: datetime) -> int:
